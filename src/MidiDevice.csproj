@@ -16,7 +16,7 @@
     <Copyright>© Copyright 2026 Hakan Lindestaf</Copyright>
     <PackageProjectUrl>https://github.com/HakanL/Haukcode.MidiDevice</PackageProjectUrl>
     <RepositoryUrl>https://github.com/HakanL/Haukcode.MidiDevice</RepositoryUrl>
-    <PackageTags>midi usb-midi midi-device winmm coremidi alsa csharp dotnet raspberry-pi arm64</PackageTags>
+    <PackageTags>midi usb-midi midi-device winmm coremidi alsa csharp dotnet raspberry-pi arm64 drywetmidi managed-midi</PackageTags>
     <PackageReadmeFile>README_NUGET.md</PackageReadmeFile>
   </PropertyGroup>
 

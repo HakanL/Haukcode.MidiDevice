@@ -110,6 +110,18 @@ CoreMIDI (`CoreMIDI.framework`) is used. Both sources (input) and destinations (
 
 ---
 
+## Prior Art
+
+This library was written after evaluating the two main managed MIDI libraries for .NET:
+
+- **[managed-midi](https://github.com/atsushieno/managed-midi)** — Pure P/Invoke approach that works on any architecture the .NET runtime supports. The rawmidi blocking-read loop pattern used in the Linux ALSA backend was informed by managed-midi's approach. Development activity has been low in recent years and the NuGet packages have not been updated regularly.
+
+- **[DryWetMidi](https://github.com/melanchall/drywetmidi)** — A comprehensive, actively maintained MIDI library. It ships a compiled native shared library (`Melanchall_DryWetMidi_Native64`) for its Windows and macOS backends, which means it does not support platforms without a pre-built native binary (notably Linux ARM64 / Raspberry Pi, where the maintainer has marked support as [won't fix](https://github.com/melanchall/drywetmidi/issues/29)).
+
+`Haukcode.MidiDevice` borrows the good idea from managed-midi — call the platform MIDI C APIs directly via P/Invoke — and applies it with a modern C# style (record types, `IObservable<T>`, `ReadOnlySpan<byte>`, `nint`) to cover Windows, macOS, and Linux ARM64 with no compiled native dependency.
+
+---
+
 ## Contributing
 
 Pull requests welcome. When adding a new platform backend, implement `IMidiInputBackend` and `IMidiOutputBackend` under `Internal/<Platform>/` and wire up `MidiDeviceManager`.
