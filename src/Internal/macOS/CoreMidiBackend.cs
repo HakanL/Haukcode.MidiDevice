@@ -116,7 +116,7 @@ internal sealed class CoreMidiInputBackend : IMidiInputBackend
             nint.Zero, "MidiInputPort", CoreMidiNative.kCFStringEncodingUTF8);
         try
         {
-            var rc = CoreMidiNative.MIDIClientCreate(clientName, nint.Zero, nint.Zero, out _client);
+            var rc = CoreMidiNative.MIDIClientCreate(clientName, null, nint.Zero, out _client);
             if (rc != CoreMidiNative.NoErr)
                 throw new IOException($"MIDIClientCreate failed for '{_info.Name}': {rc}");
 
@@ -222,7 +222,7 @@ internal sealed class CoreMidiOutputBackend : IMidiOutputBackend
             nint.Zero, "MidiOutputPort", CoreMidiNative.kCFStringEncodingUTF8);
         try
         {
-            var rc = CoreMidiNative.MIDIClientCreate(clientName, nint.Zero, nint.Zero, out _client);
+            var rc = CoreMidiNative.MIDIClientCreate(clientName, null, nint.Zero, out _client);
             if (rc != CoreMidiNative.NoErr)
                 throw new IOException($"MIDIClientCreate failed for '{info.Name}': {rc}");
 

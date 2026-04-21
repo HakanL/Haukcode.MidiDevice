@@ -91,8 +91,18 @@ internal static class CoreMidiNative
     /// <summary>Callback type for MIDIInputPortCreate.</summary>
     internal delegate void MIDIReadProc(nint pktlist, nint readProcRefCon, nint srcConnRefCon);
 
+    /// <summary>
+    /// Notification callback passed to MIDIClientCreate.
+    /// <paramref name="message"/> points to a MIDINotification struct:
+    ///   SInt32 messageID   (offset 0)
+    ///   UInt32 messageSize (offset 4)
+    /// messageID == 1 means kMIDIMsgSetupChanged (sources/destinations added or removed).
+    /// </summary>
+    internal delegate void MIDINotifyProc(nint message);
+
+    /// <summary>Create a MIDIClient with a device-change notification callback.</summary>
     [DllImport(CoreMidi)]
-    internal static extern int MIDIClientCreate(nint name, nint notifyProc, nint notifyRefCon, out nint outClient);
+    internal static extern int MIDIClientCreate(nint name, MIDINotifyProc? notifyProc, nint notifyRefCon, out nint outClient);
 
     [DllImport(CoreMidi)]
     internal static extern int MIDIClientDispose(nint client);
