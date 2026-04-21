@@ -7,6 +7,10 @@ namespace Haukcode.MidiDevice.Internal.Windows;
 /// (no running status) so data is trimmed to the correct length before
 /// being fed to the shared MidiStreamParser.
 /// Output uses midiOutShortMsg for short messages and midiOutLongMsg for SysEx.
+///
+/// Deduplication: WinMM can transiently return duplicate device names while a
+/// USB MIDI device is being registered (driver install race). We keep only the
+/// first device per name so callers never see phantom duplicates.
 /// </summary>
 internal static class WinMmBackend
 {
@@ -14,11 +18,12 @@ internal static class WinMmBackend
     {
         var count = WinMmNative.midiInGetNumDevs();
         var result = new List<MidiInputDeviceInfo>((int)count);
+        var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (uint i = 0; i < count; i++)
         {
             var caps = new WinMmNative.MIDIINCAPS();
             if (WinMmNative.midiInGetDevCaps((nint)i, ref caps, (uint)Marshal.SizeOf<WinMmNative.MIDIINCAPS>())
-                == WinMmNative.MMSYSERR_NOERROR)
+                == WinMmNative.MMSYSERR_NOERROR && seen.Add(caps.szPname))
             {
                 result.Add(new MidiInputDeviceInfo(i.ToString(), caps.szPname));
             }
@@ -30,11 +35,12 @@ internal static class WinMmBackend
     {
         var count = WinMmNative.midiOutGetNumDevs();
         var result = new List<MidiOutputDeviceInfo>((int)count);
+        var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (uint i = 0; i < count; i++)
         {
             var caps = new WinMmNative.MIDIOUTCAPS();
             if (WinMmNative.midiOutGetDevCaps((nint)i, ref caps, (uint)Marshal.SizeOf<WinMmNative.MIDIOUTCAPS>())
-                == WinMmNative.MMSYSERR_NOERROR)
+                == WinMmNative.MMSYSERR_NOERROR && seen.Add(caps.szPname))
             {
                 result.Add(new MidiOutputDeviceInfo(i.ToString(), caps.szPname));
             }
