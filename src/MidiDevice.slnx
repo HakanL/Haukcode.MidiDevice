@@ -1,0 +1,10 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/tests/">
+    <Project Path="../tests/MidiDevice.Tests/MidiDevice.Tests.csproj" />
+  </Folder>
+  <Project Path="MidiDevice.csproj" />
+</Solution>

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Haukcode.MidiDevice</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+
+    <!-- NuGet Metadata -->
+    <PackageId>Haukcode.MidiDevice</PackageId>
+    <Version>0.99.99</Version>
+    <Title>Cross-platform MIDI Device I/O for .NET</Title>
+    <Authors>Hakan Lindestaf</Authors>
+    <Description>Cross-platform USB MIDI device I/O in pure managed C# (no native shared library). Enumerate, open, send, and receive on Windows (WinMM), macOS (CoreMIDI), and Linux ARM64 (ALSA rawmidi). IObservable&lt;MidiMessage&gt; stream via System.Reactive.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>© Copyright 2026 Hakan Lindestaf</Copyright>
+    <PackageProjectUrl>https://github.com/HakanL/Haukcode.MidiDevice</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/HakanL/Haukcode.MidiDevice</RepositoryUrl>
+    <PackageTags>midi usb-midi midi-device winmm coremidi alsa csharp dotnet raspberry-pi arm64</PackageTags>
+    <PackageReadmeFile>README_NUGET.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README_NUGET.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Reactive" Version="6.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>MidiDevice.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
