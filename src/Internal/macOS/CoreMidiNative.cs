@@ -76,10 +76,15 @@ internal static class CoreMidiNative
     [DllImport(CoreMidi)]
     internal static extern int MIDIObjectGetStringProperty(nint obj, nint propertyID, out nint str);
 
+    /// <summary>Retrieve an integer property from a MIDIObject.</summary>
+    [DllImport(CoreMidi)]
+    internal static extern int MIDIObjectGetIntegerProperty(nint obj, nint propertyID, out int outValue);
+
     // CoreMIDI property name constants (CFStringRef, obtained at runtime via CFStringCreateWithCString)
     internal static readonly nint kMIDIPropertyName         = CreatePropertyKey("name");
     internal static readonly nint kMIDIPropertyManufacturer = CreatePropertyKey("manufacturer");
     internal static readonly nint kMIDIPropertyUniqueID     = CreatePropertyKey("uniqueID");
+    internal static readonly nint kMIDIPropertyOffline      = CreatePropertyKey("offline");
 
     private static nint CreatePropertyKey(string name)
         => CFStringCreateWithCString(nint.Zero, name, kCFStringEncodingUTF8);
@@ -151,6 +156,13 @@ internal static class CoreMidiNative
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /// <summary>Retrieve an integer property; returns 0 if not found.</summary>
+    internal static int GetIntegerProperty(nint midiObject, nint propertyKey)
+    {
+        MIDIObjectGetIntegerProperty(midiObject, propertyKey, out var value);
+        return value;
+    }
 
     /// <summary>Convert a CoreMIDI CFStringRef property to a managed string, then release it.</summary>
     internal static string GetStringProperty(nint midiObject, nint propertyKey)

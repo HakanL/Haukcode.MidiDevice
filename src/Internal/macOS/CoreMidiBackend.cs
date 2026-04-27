@@ -20,6 +20,7 @@ internal static class CoreMidiBackend
         {
             var ep = CoreMidiNative.MIDIGetSource(i);
             if (ep == nint.Zero) continue;
+            if (CoreMidiNative.GetIntegerProperty(ep, CoreMidiNative.kMIDIPropertyOffline) != 0) continue;
 
             var name = CoreMidiNative.GetStringProperty(ep, CoreMidiNative.kMIDIPropertyName);
             var uid  = CoreMidiNative.GetStringProperty(ep, CoreMidiNative.kMIDIPropertyUniqueID);
@@ -40,6 +41,7 @@ internal static class CoreMidiBackend
         {
             var ep = CoreMidiNative.MIDIGetDestination(i);
             if (ep == nint.Zero) continue;
+            if (CoreMidiNative.GetIntegerProperty(ep, CoreMidiNative.kMIDIPropertyOffline) != 0) continue;
 
             var name = CoreMidiNative.GetStringProperty(ep, CoreMidiNative.kMIDIPropertyName);
             var uid  = CoreMidiNative.GetStringProperty(ep, CoreMidiNative.kMIDIPropertyUniqueID);

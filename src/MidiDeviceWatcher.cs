@@ -54,15 +54,18 @@ public sealed class MidiDeviceWatcher : IDisposable
     /// <summary>Start watching. Safe to call only once.</summary>
     public void Start()
     {
-        // Snapshot the current state so we have a baseline for change detection.
-        _lastInputNames  = GetInputNames();
-        _lastOutputNames = GetOutputNames();
-
+        // On macOS, start the CoreMIDI notifier first so a MIDIClient exists in
+        // the process before we call MIDIGetNumberOfSources(). CoreMIDI may
+        // return an incomplete device list if no client has been created yet.
         if (_platformNotifier != null)
         {
             _platformNotifier.Changed += OnPlatformNotification;
             _platformNotifier.Start();
         }
+
+        // Snapshot the current state so we have a baseline for change detection.
+        _lastInputNames  = GetInputNames();
+        _lastOutputNames = GetOutputNames();
 
         _loopTask = Task.Run(() => PollLoopAsync(_cts.Token));
     }
