@@ -63,6 +63,7 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
     private nint _sysExDataPtr;
     private WinMmNative.MidiInProc? _callback; // keep alive — prevents GC collection
     private Action<ReadOnlyMemory<byte>>? _onData;
+    private volatile bool _stopping;
 
     public WinMmInputBackend(MidiInputDeviceInfo info) => _info = info;
 
@@ -72,6 +73,7 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
     public void StartReceiving(Action<ReadOnlyMemory<byte>> onData)
     {
         _onData   = onData;
+        _stopping = false;
         _callback = OnMidiInProc; // closure captures this; stored as field to pin delegate
 
         var deviceId = uint.Parse(_info.Id);
@@ -134,7 +136,11 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
         // Re-add the buffer so the next SysEx message can be captured.
         // Calling midiInPrepareHeader + midiInAddBuffer from the callback is
         // the standard pattern used in real-world WinMM applications.
-        if (_handle != nint.Zero)
+        //
+        // Never re-add while StopReceiving is running: midiInReset returns every
+        // pending buffer through this callback synchronously, so re-adding here
+        // hands the buffer straight back to midiInReset and it loops forever.
+        if (_handle != nint.Zero && !_stopping)
         {
             var headerSize = (uint)Marshal.SizeOf<WinMmNative.MIDIHDR>();
             WinMmNative.midiInPrepareHeader(_handle, headerPtr, headerSize);
@@ -163,6 +169,10 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
     public void StopReceiving()
     {
         if (_handle == nint.Zero) return;
+
+        // Tell the callback to stop re-queuing buffers before midiInReset hands
+        // them back, otherwise midiInReset never drains (see OnSysExReceived).
+        _stopping = true;
 
         // midiInStop + midiInReset flushes pending buffers and fires MIM_LONGDATA
         // for any in-flight SysEx, then we can safely close and unprepare.
