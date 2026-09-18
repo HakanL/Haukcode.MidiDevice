@@ -59,6 +59,25 @@ internal static class WinMmBackend
         return result;
     }
 
+    /// <summary>The PnP interface path inside a device id, or null for an index fallback id.</summary>
+    public static string? InterfacePathOf(string id)
+    {
+        if (uint.TryParse(id, out _))
+            return null;
+
+        var bar = id.LastIndexOf('|');
+
+        return bar > 0 ? id[..bar] : id;
+    }
+
+    /// <summary>
+    /// Start watching for removal of the device behind <paramref name="id"/>.
+    /// Must happen before the device is opened, so a removal between the
+    /// open and the watch can't slip through. Null for index fallback ids.
+    /// </summary>
+    public static IDisposable? WatchRemoval(string id, DisconnectSignal signal) =>
+        InterfacePathOf(id) is { } path ? WinMmRemovalWatcher.Watch(path, signal.Raise) : null;
+
     /// <summary>Current WinMM index of the input device with this id.</summary>
     public static uint ResolveInputIndex(MidiInputDeviceInfo info) =>
         ResolveIndex(info.Id, info.Name, WinMmNative.midiInGetNumDevs(), QueryInputInterfacePath);
@@ -169,11 +188,13 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
     private WinMmNative.MidiInProc? _callback; // keep alive — prevents GC collection
     private Action<ReadOnlyMemory<byte>>? _onData;
     private volatile bool _stopping;
+    private IDisposable? _removalWatch;
 
     public WinMmInputBackend(MidiInputDeviceInfo info) => _info = info;
 
     public string Id   => _info.Id;
     public string Name => _info.Name;
+    public DisconnectSignal Disconnect { get; } = new();
 
     public void StartReceiving(Action<ReadOnlyMemory<byte>> onData)
     {
@@ -181,11 +202,17 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
         _stopping = false;
         _callback = OnMidiInProc; // closure captures this; stored as field to pin delegate
 
+        _removalWatch = WinMmBackend.WatchRemoval(_info.Id, Disconnect);
+
         var deviceId = WinMmBackend.ResolveInputIndex(_info);
         var rc = WinMmNative.midiInOpen(out _handle, deviceId, _callback, nint.Zero,
             WinMmNative.CALLBACK_FUNCTION);
         if (rc != WinMmNative.MMSYSERR_NOERROR)
+        {
+            _removalWatch?.Dispose();
+            _removalWatch = null;
             throw new IOException($"midiInOpen failed for '{_info.Name}': error {rc}");
+        }
 
         PrepareSysExBuffer();
 
@@ -221,7 +248,14 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
                 OnSysExReceived(dwParam1);
                 break;
 
-            // MIM_OPEN, MIM_CLOSE, MIM_ERROR: nothing to do
+            case WinMmNative.MIM_CLOSE:
+                // Not sent on surprise removal by the drivers tested so far, but
+                // a close we didn't ask for can only mean the device is gone.
+                if (!_stopping)
+                    Disconnect.Raise();
+                break;
+
+            // MIM_OPEN, MIM_ERROR: nothing to do
         }
     }
 
@@ -273,6 +307,9 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
 
     public void StopReceiving()
     {
+        _removalWatch?.Dispose();
+        _removalWatch = null;
+
         if (_handle == nint.Zero) return;
 
         // Tell the callback to stop re-queuing buffers before midiInReset hands
@@ -308,22 +345,32 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
 
 internal sealed class WinMmOutputBackend : IMidiOutputBackend
 {
+    // Generous for a 4 KB SysEx at 31.25 kbaud (~1.3 s) on a real DIN port.
+    private const int SysExSendTimeoutMs = 5000;
+
     private readonly MidiOutputDeviceInfo _info;
+    private readonly IDisposable? _removalWatch;
     private nint _handle;
     private bool _disposed;
 
     public WinMmOutputBackend(MidiOutputDeviceInfo info)
     {
         _info = info;
+        _removalWatch = WinMmBackend.WatchRemoval(info.Id, Disconnect);
+
         var deviceId = WinMmBackend.ResolveOutputIndex(info);
         var rc = WinMmNative.midiOutOpen(out _handle, deviceId,
             nint.Zero, nint.Zero, WinMmNative.CALLBACK_NULL);
         if (rc != WinMmNative.MMSYSERR_NOERROR)
+        {
+            _removalWatch?.Dispose();
             throw new IOException($"midiOutOpen failed for '{info.Name}': error {rc}");
+        }
     }
 
     public string Id   => _info.Id;
     public string Name => _info.Name;
+    public DisconnectSignal Disconnect { get; } = new();
 
     public void Send(ReadOnlySpan<byte> data)
     {
@@ -342,7 +389,19 @@ internal sealed class WinMmOutputBackend : IMidiOutputBackend
         uint msg = 0;
         for (int i = 0; i < Math.Min(data.Length, 3); i++)
             msg |= (uint)data[i] << (i * 8);
-        WinMmNative.midiOutShortMsg(_handle, msg);
+        CheckSendResult(WinMmNative.midiOutShortMsg(_handle, msg));
+    }
+
+    /// <summary>
+    /// A handle whose device was unplugged fails every send with
+    /// MMSYSERR_NODRIVER, and keeps failing after a replug (the new device
+    /// gets a new handle). That makes a failed send a definite disconnect,
+    /// even when the removal notification was missed.
+    /// </summary>
+    private void CheckSendResult(uint rc)
+    {
+        if (rc == WinMmNative.MMSYSERR_NODRIVER)
+            Disconnect.Raise();
     }
 
     private void SendSysEx(ReadOnlySpan<byte> data)
@@ -363,23 +422,46 @@ internal sealed class WinMmOutputBackend : IMidiOutputBackend
             Marshal.WriteIntPtr(headerPtr, 0,        dataPtr);         // lpData
             Marshal.WriteInt32(headerPtr, nint.Size, data.Length);     // dwBufferLength
 
-            WinMmNative.midiOutPrepareHeader(_handle, headerPtr, headerSize);
-            WinMmNative.midiOutLongMsg(_handle, headerPtr, headerSize);
-
-            // Spin until WinMM sets MHDR_DONE — typically microseconds for small SysEx.
-            while (true)
+            var rc = WinMmNative.midiOutPrepareHeader(_handle, headerPtr, headerSize);
+            if (rc != WinMmNative.MMSYSERR_NOERROR)
             {
-                var header = Marshal.PtrToStructure<WinMmNative.MIDIHDR>(headerPtr);
-                if ((header.dwFlags & WinMmNative.MHDR_DONE) != 0) break;
-                Thread.Sleep(1);
+                CheckSendResult(rc);
+                return;
             }
 
-            WinMmNative.midiOutUnprepareHeader(_handle, headerPtr, headerSize);
+            // Only wait for MHDR_DONE when the message was actually queued: a
+            // failed midiOutLongMsg (e.g. device unplugged) never sets it, and
+            // this loop used to spin forever.
+            rc = WinMmNative.midiOutLongMsg(_handle, headerPtr, headerSize);
+            if (rc == WinMmNative.MMSYSERR_NOERROR)
+            {
+                // Spin until WinMM sets MHDR_DONE — typically microseconds for small SysEx.
+                // Bounded, so a device that dies mid-send can't hang the caller.
+                var deadline = Environment.TickCount64 + SysExSendTimeoutMs;
+                while (Environment.TickCount64 < deadline)
+                {
+                    var header = Marshal.PtrToStructure<WinMmNative.MIDIHDR>(headerPtr);
+                    if ((header.dwFlags & WinMmNative.MHDR_DONE) != 0) break;
+                    Thread.Sleep(1);
+                }
+            }
+            else
+            {
+                CheckSendResult(rc);
+            }
+
+            // Returns MIDIERR_STILLPLAYING if the timeout above expired; the
+            // buffers are then leaked rather than freed under the driver.
+            if (WinMmNative.midiOutUnprepareHeader(_handle, headerPtr, headerSize) == WinMmNative.MIDIERR_STILLPLAYING)
+            {
+                headerPtr = nint.Zero;
+                dataPtr   = nint.Zero;
+            }
         }
         finally
         {
-            Marshal.FreeHGlobal(headerPtr);
-            Marshal.FreeHGlobal(dataPtr);
+            if (headerPtr != nint.Zero) Marshal.FreeHGlobal(headerPtr);
+            if (dataPtr != nint.Zero)   Marshal.FreeHGlobal(dataPtr);
         }
     }
 
@@ -387,6 +469,7 @@ internal sealed class WinMmOutputBackend : IMidiOutputBackend
     {
         if (_disposed) return;
         _disposed = true;
+        _removalWatch?.Dispose();
         if (_handle == nint.Zero) return;
         WinMmNative.midiOutClose(_handle);
         _handle = nint.Zero;

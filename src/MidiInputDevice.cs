@@ -11,11 +11,13 @@ public sealed class MidiInputDevice : IDisposable
     private readonly IMidiInputBackend _backend;
     private readonly Subject<MidiMessage> _subject = new();
     private readonly MidiStreamParser _parser = new();
-    private bool _disposed;
+    private readonly AsyncSubject<Unit> _disconnected = new();
+    private volatile bool _disposed;
 
     private MidiInputDevice(IMidiInputBackend backend)
     {
         _backend = backend;
+        _backend.Disconnect.Raised += OnDisconnected;
         _backend.StartReceiving(OnRawBytes);
     }
 
@@ -32,6 +34,28 @@ public sealed class MidiInputDevice : IDisposable
     /// </summary>
     public IObservable<MidiMessage> Messages => _subject.AsObservable();
 
+    /// <summary>
+    /// True once the OS has reported the device gone (unplugged). A disconnected
+    /// device never recovers: dispose it and open the device again once it is
+    /// enumerated. Disposing does not set this.
+    /// </summary>
+    public bool IsDisconnected => _backend.Disconnect.IsRaised;
+
+    /// <summary>
+    /// Emits once, then completes, when the OS reports the device gone. A late
+    /// subscriber still receives it. Completes without a value when the device
+    /// is disposed first. May emit on an OS callback thread — keep handlers
+    /// non-blocking.
+    /// </summary>
+    public IObservable<Unit> Disconnected => _disconnected.AsObservable();
+
+    private void OnDisconnected()
+    {
+        if (_disposed) return;
+        _disconnected.OnNext(Unit.Default);
+        _disconnected.OnCompleted();
+    }
+
     private void OnRawBytes(ReadOnlyMemory<byte> bytes)
     {
         _parser.Process(bytes.Span, msg => _subject.OnNext(msg));
@@ -41,9 +65,11 @@ public sealed class MidiInputDevice : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _backend.Disconnect.Raised -= OnDisconnected;
         _backend.StopReceiving();
         _backend.Dispose();
         _subject.OnCompleted();
         _subject.Dispose();
+        _disconnected.OnCompleted();
     }
 }

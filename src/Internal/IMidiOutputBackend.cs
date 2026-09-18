@@ -10,6 +10,9 @@ internal interface IMidiOutputBackend : IDisposable
     string Id { get; }
     string Name { get; }
 
+    /// <summary>Raised when the OS reports the device gone. Never raised by Dispose.</summary>
+    DisconnectSignal Disconnect { get; }
+
     /// <summary>Send <paramref name="data"/> to the device. May be called from any thread.</summary>
     void Send(ReadOnlySpan<byte> data);
 }

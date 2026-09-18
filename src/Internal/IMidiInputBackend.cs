@@ -11,6 +11,9 @@ internal interface IMidiInputBackend : IDisposable
     string Id { get; }
     string Name { get; }
 
+    /// <summary>Raised when the OS reports the device gone. Never raised by <see cref="StopReceiving"/> or Dispose.</summary>
+    DisconnectSignal Disconnect { get; }
+
     /// <summary>Begin receiving. <paramref name="onData"/> is called on the backend thread.</summary>
     void StartReceiving(Action<ReadOnlyMemory<byte>> onData);
 

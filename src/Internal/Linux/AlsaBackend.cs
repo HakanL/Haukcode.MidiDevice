@@ -89,6 +89,7 @@ internal sealed class AlsaInputBackend : IMidiInputBackend
 
     public string Id   => _info.Id;
     public string Name => _info.Name;
+    public DisconnectSignal Disconnect { get; } = new();
 
     public void StartReceiving(Action<ReadOnlyMemory<byte>> onData)
     {
@@ -117,7 +118,11 @@ internal sealed class AlsaInputBackend : IMidiInputBackend
             {
                 if (_stopping)           break; // expected: handle was closed by StopReceiving
                 if (n == ErrnoEINTR)     continue; // signal interrupted the syscall, retry
-                break; // real error (e.g. device removed — -ENODEV)
+
+                // Real error (device removed — -ENODEV). The read loop is
+                // over, so the port is dead either way: report it.
+                Disconnect.Raise();
+                break;
             }
 
             // Memory is only valid for the duration of this synchronous invocation.
@@ -150,6 +155,9 @@ internal sealed class AlsaInputBackend : IMidiInputBackend
 
 internal sealed class AlsaOutputBackend : IMidiOutputBackend
 {
+    private const int ErrnoEINTR  = -4;
+    private const int ErrnoEAGAIN = -11;
+
     private readonly MidiOutputDeviceInfo _info;
     private nint _handle;
     private bool _disposed;
@@ -164,12 +172,18 @@ internal sealed class AlsaOutputBackend : IMidiOutputBackend
 
     public string Id   => _info.Id;
     public string Name => _info.Name;
+    public DisconnectSignal Disconnect { get; } = new();
 
     public void Send(ReadOnlySpan<byte> data)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var bytes = data.ToArray(); // ToArray needed for P/Invoke byte[] parameter
-        AlsaNative.snd_rawmidi_write(_handle, bytes, bytes.Length);
+        var n = AlsaNative.snd_rawmidi_write(_handle, bytes, bytes.Length);
+
+        // Blocking mode, so any other error (-ENODEV once unplugged) means
+        // the handle is broken for good.
+        if (n < 0 && n != ErrnoEINTR && n != ErrnoEAGAIN)
+            Disconnect.Raise();
     }
 
     public void Dispose()

@@ -58,6 +58,46 @@ internal static class CoreMidiBackend
     // Internal helpers — endpoint lookup by uniqueID
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// True when <paramref name="endpoint"/> is still enumerated under
+    /// <paramref name="uid"/> and online. An unplugged USB device's endpoints
+    /// either disappear or stay listed but go offline.
+    /// </summary>
+    internal static bool IsEndpointAlive(nint endpoint, string uid, bool isSource)
+    {
+        var current = isSource ? FindSource(uid) : FindDestination(uid);
+        if (current == nint.Zero || current != endpoint)
+            return false;
+
+        return CoreMidiNative.GetIntegerProperty(endpoint, CoreMidiNative.kMIDIPropertyOffline) == 0;
+    }
+
+    /// <summary>
+    /// Client notification handler shared by the input and output backends:
+    /// on any topology or property change, check the endpoint is still there.
+    /// </summary>
+    internal static void CheckEndpointOnNotify(nint message, nint endpoint, string uid, bool isSource, DisconnectSignal signal)
+    {
+        const int kMIDIMsgSetupChanged    = 1;
+        const int kMIDIMsgObjectRemoved   = 3;
+        const int kMIDIMsgPropertyChanged = 4;
+
+        try
+        {
+            // message → MIDINotification { SInt32 messageID; UInt32 messageSize; ... }
+            var messageId = Marshal.ReadInt32(message);
+            if (messageId is not (kMIDIMsgSetupChanged or kMIDIMsgObjectRemoved or kMIDIMsgPropertyChanged))
+                return;
+
+            if (endpoint != nint.Zero && !IsEndpointAlive(endpoint, uid, isSource))
+                signal.Raise();
+        }
+        catch
+        {
+            // Never let an exception escape into the CoreMIDI notification thread.
+        }
+    }
+
     /// <summary>Find a source endpoint by the uniqueID stored in the device info.</summary>
     internal static nint FindSource(string uid)
     {
@@ -95,18 +135,21 @@ internal sealed class CoreMidiInputBackend : IMidiInputBackend
     private nint _source;
     private Action<ReadOnlyMemory<byte>>? _onData;
 
-    // Keep delegate alive — prevents GC collection while the port is open.
+    // Keep delegates alive — prevents GC collection while the port is open.
     private CoreMidiNative.MIDIReadProc? _readProc;
+    private CoreMidiNative.MIDINotifyProc? _notifyProc;
 
     public CoreMidiInputBackend(MidiInputDeviceInfo info) => _info = info;
 
     public string Id   => _info.Id;
     public string Name => _info.Name;
+    public DisconnectSignal Disconnect { get; } = new();
 
     public void StartReceiving(Action<ReadOnlyMemory<byte>> onData)
     {
-        _onData   = onData;
-        _readProc = OnMidiRead;
+        _onData     = onData;
+        _readProc   = OnMidiRead;
+        _notifyProc = message => CoreMidiBackend.CheckEndpointOnNotify(message, _source, _info.Id, isSource: true, Disconnect);
 
         _source = CoreMidiBackend.FindSource(_info.Id);
         if (_source == nint.Zero)
@@ -118,7 +161,7 @@ internal sealed class CoreMidiInputBackend : IMidiInputBackend
             nint.Zero, "MidiInputPort", CoreMidiNative.kCFStringEncodingUTF8);
         try
         {
-            var rc = CoreMidiNative.MIDIClientCreate(clientName, null, nint.Zero, out _client);
+            var rc = CoreMidiNative.MIDIClientCreate(clientName, _notifyProc, nint.Zero, out _client);
             if (rc != CoreMidiNative.NoErr)
                 throw new IOException($"MIDIClientCreate failed for '{_info.Name}': {rc}");
 
@@ -211,9 +254,13 @@ internal sealed class CoreMidiOutputBackend : IMidiOutputBackend
     private nint _dest;
     private bool _disposed;
 
+    // Keep delegate alive — prevents GC collection while the client is open.
+    private readonly CoreMidiNative.MIDINotifyProc _notifyProc;
+
     public CoreMidiOutputBackend(MidiOutputDeviceInfo info)
     {
         _info = info;
+        _notifyProc = message => CoreMidiBackend.CheckEndpointOnNotify(message, _dest, _info.Id, isSource: false, Disconnect);
         _dest = CoreMidiBackend.FindDestination(info.Id);
         if (_dest == nint.Zero)
             throw new IOException($"CoreMIDI destination not found for '{info.Name}' (id={info.Id})");
@@ -224,7 +271,7 @@ internal sealed class CoreMidiOutputBackend : IMidiOutputBackend
             nint.Zero, "MidiOutputPort", CoreMidiNative.kCFStringEncodingUTF8);
         try
         {
-            var rc = CoreMidiNative.MIDIClientCreate(clientName, null, nint.Zero, out _client);
+            var rc = CoreMidiNative.MIDIClientCreate(clientName, _notifyProc, nint.Zero, out _client);
             if (rc != CoreMidiNative.NoErr)
                 throw new IOException($"MIDIClientCreate failed for '{info.Name}': {rc}");
 
@@ -241,6 +288,7 @@ internal sealed class CoreMidiOutputBackend : IMidiOutputBackend
 
     public string Id   => _info.Id;
     public string Name => _info.Name;
+    public DisconnectSignal Disconnect { get; } = new();
 
     public void Send(ReadOnlySpan<byte> data)
     {

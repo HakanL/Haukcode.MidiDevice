@@ -10,6 +10,7 @@ internal static class WinMmNative
     // -------------------------------------------------------------------------
 
     internal const uint MMSYSERR_NOERROR    = 0;
+    internal const uint MMSYSERR_NODRIVER   = 6; // device removed; the handle stays dead after a replug
     internal const uint MIDIERR_STILLPLAYING = 65;
 
     internal const uint CALLBACK_NULL     = 0x00000000;
