@@ -14,6 +14,9 @@ internal static class CoreMidiBackend
 {
     public static IReadOnlyList<MidiInputDeviceInfo> GetInputDevices()
     {
+        // Without the run loop the device list below is a frozen snapshot.
+        CoreMidiRunLoop.EnsureStarted();
+
         var count  = CoreMidiNative.MIDIGetNumberOfSources();
         var result = new List<MidiInputDeviceInfo>((int)count);
         for (uint i = 0; i < count; i++)
@@ -35,6 +38,8 @@ internal static class CoreMidiBackend
 
     public static IReadOnlyList<MidiOutputDeviceInfo> GetOutputDevices()
     {
+        CoreMidiRunLoop.EnsureStarted();
+
         var count  = CoreMidiNative.MIDIGetNumberOfDestinations();
         var result = new List<MidiOutputDeviceInfo>((int)count);
         for (uint i = 0; i < count; i++)
@@ -161,7 +166,7 @@ internal sealed class CoreMidiInputBackend : IMidiInputBackend
             nint.Zero, "MidiInputPort", CoreMidiNative.kCFStringEncodingUTF8);
         try
         {
-            var rc = CoreMidiNative.MIDIClientCreate(clientName, _notifyProc, nint.Zero, out _client);
+            var rc = CoreMidiNative.CreateClient(clientName, _notifyProc, out _client);
             if (rc != CoreMidiNative.NoErr)
                 throw new IOException($"MIDIClientCreate failed for '{_info.Name}': {rc}");
 
@@ -271,7 +276,7 @@ internal sealed class CoreMidiOutputBackend : IMidiOutputBackend
             nint.Zero, "MidiOutputPort", CoreMidiNative.kCFStringEncodingUTF8);
         try
         {
-            var rc = CoreMidiNative.MIDIClientCreate(clientName, _notifyProc, nint.Zero, out _client);
+            var rc = CoreMidiNative.CreateClient(clientName, _notifyProc, out _client);
             if (rc != CoreMidiNative.NoErr)
                 throw new IOException($"MIDIClientCreate failed for '{info.Name}': {rc}");
 

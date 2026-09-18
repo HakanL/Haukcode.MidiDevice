@@ -2,10 +2,11 @@ namespace Haukcode.MidiDevice.Internal.macOS;
 
 /// <summary>
 /// macOS CoreMIDI implementation of <see cref="IPlatformDeviceNotifier"/>.
-/// Creates a lightweight MIDIClient whose notifyProc is called by CoreMIDI on
-/// its own internal thread whenever the device topology changes
-/// (kMIDIMsgSetupChanged, messageID == 1).  No CFRunLoop is needed — CoreMIDI
-/// delivers the notification directly to the callback.
+/// Creates a lightweight MIDIClient whose notifyProc is called whenever the
+/// device topology changes (kMIDIMsgSetupChanged, messageID == 1). CoreMIDI
+/// delivers notifications on the run loop of the thread that created the
+/// client, so the client is created on <see cref="CoreMidiRunLoop"/>'s thread —
+/// on a thread without a run loop the callback never fires.
 /// </summary>
 internal sealed class CoreMidiDeviceNotifier : IPlatformDeviceNotifier
 {
@@ -26,7 +27,7 @@ internal sealed class CoreMidiDeviceNotifier : IPlatformDeviceNotifier
             // Ignore the return code — if it fails (e.g. sandboxed app without
             // the com.apple.security.device.audio-input entitlement), the watcher
             // just won't fire and the caller falls back to polling gracefully.
-            CoreMidiNative.MIDIClientCreate(clientName, _notifyProc, nint.Zero, out _client);
+            CoreMidiNative.CreateClient(clientName, _notifyProc, out _client);
         }
         finally
         {

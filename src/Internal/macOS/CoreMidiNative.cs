@@ -7,7 +7,7 @@ namespace Haukcode.MidiDevice.Internal.macOS;
 internal static class CoreMidiNative
 {
     private const string CoreMidi        = "/System/Library/Frameworks/CoreMIDI.framework/CoreMIDI";
-    private const string CoreFoundation  = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+    internal const string CoreFoundation  = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
 
     // -------------------------------------------------------------------------
     // OSStatus / error codes
@@ -52,6 +52,12 @@ internal static class CoreMidiNative
 
     [DllImport(CoreFoundation)]
     internal static extern void CFRunLoopStop(nint rl);
+
+    /// <summary>kCFRunLoopRunFinished: the run loop has no sources to service.</summary>
+    internal const int kCFRunLoopRunFinished = 1;
+
+    [DllImport(CoreFoundation)]
+    internal static extern int CFRunLoopRunInMode(nint mode, double seconds, [MarshalAs(UnmanagedType.I1)] bool returnAfterSourceHandled);
 
     // -------------------------------------------------------------------------
     // CoreMIDI — device / endpoint enumeration
@@ -108,6 +114,23 @@ internal static class CoreMidiNative
     /// <summary>Create a MIDIClient with a device-change notification callback.</summary>
     [DllImport(CoreMidi)]
     internal static extern int MIDIClientCreate(nint name, MIDINotifyProc? notifyProc, nint notifyRefCon, out nint outClient);
+
+    /// <summary>
+    /// MIDIClientCreate on the CoreMIDI run-loop thread, so the client's
+    /// notifications (and the process's view of the device list) are
+    /// delivered. Always use this rather than calling MIDIClientCreate directly.
+    /// </summary>
+    internal static int CreateClient(nint name, MIDINotifyProc? notifyProc, out nint outClient)
+    {
+        var (rc, client) = CoreMidiRunLoop.Invoke(() =>
+        {
+            var result = MIDIClientCreate(name, notifyProc, nint.Zero, out var created);
+            return (result, created);
+        });
+        outClient = client;
+
+        return rc;
+    }
 
     [DllImport(CoreMidi)]
     internal static extern int MIDIClientDispose(nint client);
