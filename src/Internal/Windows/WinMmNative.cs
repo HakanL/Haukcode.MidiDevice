@@ -24,6 +24,11 @@ internal static class WinMmNative
     internal const uint MHDR_DONE     = 0x00000001;
     internal const uint MHDR_PREPARED = 0x00000002;
 
+    // Driver messages for midiInMessage / midiOutMessage that return the
+    // PnP device interface path of a device (addressed by its index).
+    internal const uint DRV_QUERYDEVICEINTERFACE     = 0x080C;
+    internal const uint DRV_QUERYDEVICEINTERFACESIZE = 0x080D;
+
     // -------------------------------------------------------------------------
     // MIDIINCAPS / MIDIOUTCAPS
     // -------------------------------------------------------------------------
@@ -121,6 +126,10 @@ internal static class WinMmNative
     [DllImport(WinMm)]
     internal static extern uint midiInAddBuffer(nint hMidiIn, nint lpMidiInHdr, uint cbMidiInHdr);
 
+    /// <summary>Send a driver message; <paramref name="hMidiIn"/> may be a device index cast to a handle.</summary>
+    [DllImport(WinMm)]
+    internal static extern uint midiInMessage(nint hMidiIn, uint uMsg, nint dw1, nint dw2);
+
     // -------------------------------------------------------------------------
     // Output P/Invoke
     // -------------------------------------------------------------------------
@@ -150,6 +159,10 @@ internal static class WinMmNative
 
     [DllImport(WinMm)]
     internal static extern uint midiOutLongMsg(nint hMidiOut, nint lpMidiOutHdr, uint cbMidiOutHdr);
+
+    /// <summary>Send a driver message; <paramref name="hMidiOut"/> may be a device index cast to a handle.</summary>
+    [DllImport(WinMm)]
+    internal static extern uint midiOutMessage(nint hMidiOut, uint uMsg, nint dw1, nint dw2);
 
     // -------------------------------------------------------------------------
     // Helpers

@@ -11,12 +11,22 @@ namespace Haukcode.MidiDevice.Internal.Windows;
 /// Deduplication: WinMM can transiently return duplicate device names while a
 /// USB MIDI device is being registered (driver install race). We keep only the
 /// first device per name so callers never see phantom duplicates.
+///
+/// Device ids: a WinMM device index is only a position in the current device
+/// list — it shifts whenever a device earlier in the list comes or goes. The
+/// id we hand out is instead the device's PnP interface path (queried with
+/// DRV_QUERYDEVICEINTERFACE) plus the port's ordinal within that interface,
+/// since every port of a multi-port device shares one path. That id does not
+/// move when other devices are plugged or unplugged, and it tells identical
+/// devices apart. The index is resolved from it again at open time. A driver
+/// that can't report its interface path falls back to the bare index.
 /// </summary>
 internal static class WinMmBackend
 {
     public static IReadOnlyList<MidiInputDeviceInfo> GetInputDevices()
     {
         var count = WinMmNative.midiInGetNumDevs();
+        var ids    = GetDeviceIds(count, QueryInputInterfacePath);
         var result = new List<MidiInputDeviceInfo>((int)count);
         var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (uint i = 0; i < count; i++)
@@ -25,7 +35,7 @@ internal static class WinMmBackend
             if (WinMmNative.midiInGetDevCaps((nint)i, ref caps, (uint)Marshal.SizeOf<WinMmNative.MIDIINCAPS>())
                 == WinMmNative.MMSYSERR_NOERROR && seen.Add(caps.szPname))
             {
-                result.Add(new MidiInputDeviceInfo(i.ToString(), caps.szPname));
+                result.Add(new MidiInputDeviceInfo(ids[(int)i], caps.szPname));
             }
         }
         return result;
@@ -34,6 +44,7 @@ internal static class WinMmBackend
     public static IReadOnlyList<MidiOutputDeviceInfo> GetOutputDevices()
     {
         var count = WinMmNative.midiOutGetNumDevs();
+        var ids    = GetDeviceIds(count, QueryOutputInterfacePath);
         var result = new List<MidiOutputDeviceInfo>((int)count);
         var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (uint i = 0; i < count; i++)
@@ -42,10 +53,104 @@ internal static class WinMmBackend
             if (WinMmNative.midiOutGetDevCaps((nint)i, ref caps, (uint)Marshal.SizeOf<WinMmNative.MIDIOUTCAPS>())
                 == WinMmNative.MMSYSERR_NOERROR && seen.Add(caps.szPname))
             {
-                result.Add(new MidiOutputDeviceInfo(i.ToString(), caps.szPname));
+                result.Add(new MidiOutputDeviceInfo(ids[(int)i], caps.szPname));
             }
         }
         return result;
+    }
+
+    /// <summary>Current WinMM index of the input device with this id.</summary>
+    public static uint ResolveInputIndex(MidiInputDeviceInfo info) =>
+        ResolveIndex(info.Id, info.Name, WinMmNative.midiInGetNumDevs(), QueryInputInterfacePath);
+
+    /// <summary>Current WinMM index of the output device with this id.</summary>
+    public static uint ResolveOutputIndex(MidiOutputDeviceInfo info) =>
+        ResolveIndex(info.Id, info.Name, WinMmNative.midiOutGetNumDevs(), QueryOutputInterfacePath);
+
+    private static uint ResolveIndex(string id, string name, uint count, Func<uint, string?> queryPath)
+    {
+        // Index fallback id, or one from an older version of this library.
+        if (uint.TryParse(id, out var index))
+            return index;
+
+        var ids = GetDeviceIds(count, queryPath);
+        for (uint i = 0; i < count; i++)
+        {
+            if (string.Equals(ids[(int)i], id, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        throw new IOException($"MIDI device '{name}' is no longer connected");
+    }
+
+    /// <summary>
+    /// Id for every device index: "&lt;interface path&gt;|&lt;ordinal&gt;", where the
+    /// ordinal counts earlier ports sharing the same path, or the bare index
+    /// when the driver doesn't report a path.
+    /// </summary>
+    private static string[] GetDeviceIds(uint count, Func<uint, string?> queryPath)
+    {
+        var ids      = new string[count];
+        var ordinals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (uint i = 0; i < count; i++)
+        {
+            var path = queryPath(i);
+            if (string.IsNullOrEmpty(path))
+            {
+                ids[i] = i.ToString();
+                continue;
+            }
+
+            ordinals.TryGetValue(path, out var ordinal);
+            ordinals[path] = ordinal + 1;
+            ids[i] = $"{path}|{ordinal}";
+        }
+        return ids;
+    }
+
+    private static string? QueryInputInterfacePath(uint index) =>
+        QueryInterfacePath(index, WinMmNative.midiInMessage);
+
+    private static string? QueryOutputInterfacePath(uint index) =>
+        QueryInterfacePath(index, WinMmNative.midiOutMessage);
+
+    private static string? QueryInterfacePath(uint index, Func<nint, uint, nint, nint, uint> message)
+    {
+        var sizePtr = Marshal.AllocHGlobal(sizeof(uint));
+        try
+        {
+            Marshal.WriteInt32(sizePtr, 0);
+            if (message((nint)index, WinMmNative.DRV_QUERYDEVICEINTERFACESIZE, sizePtr, nint.Zero)
+                != WinMmNative.MMSYSERR_NOERROR)
+                return null;
+
+            // Size in bytes, including the terminating null (UTF-16).
+            var size = Marshal.ReadInt32(sizePtr);
+            if (size <= sizeof(char))
+                return null;
+
+            var buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                if (message((nint)index, WinMmNative.DRV_QUERYDEVICEINTERFACE, buffer, size)
+                    != WinMmNative.MMSYSERR_NOERROR)
+                    return null;
+
+                return Marshal.PtrToStringUni(buffer, size / sizeof(char)).TrimEnd('\0');
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(sizePtr);
+        }
     }
 }
 
@@ -76,7 +181,7 @@ internal sealed class WinMmInputBackend : IMidiInputBackend
         _stopping = false;
         _callback = OnMidiInProc; // closure captures this; stored as field to pin delegate
 
-        var deviceId = uint.Parse(_info.Id);
+        var deviceId = WinMmBackend.ResolveInputIndex(_info);
         var rc = WinMmNative.midiInOpen(out _handle, deviceId, _callback, nint.Zero,
             WinMmNative.CALLBACK_FUNCTION);
         if (rc != WinMmNative.MMSYSERR_NOERROR)
@@ -210,7 +315,7 @@ internal sealed class WinMmOutputBackend : IMidiOutputBackend
     public WinMmOutputBackend(MidiOutputDeviceInfo info)
     {
         _info = info;
-        var deviceId = uint.Parse(info.Id);
+        var deviceId = WinMmBackend.ResolveOutputIndex(info);
         var rc = WinMmNative.midiOutOpen(out _handle, deviceId,
             nint.Zero, nint.Zero, WinMmNative.CALLBACK_NULL);
         if (rc != WinMmNative.MMSYSERR_NOERROR)

@@ -105,6 +105,8 @@ ALSA rawmidi (`/dev/snd/midiC*D*`) is used. Device paths are enumerated via `snd
 ### Windows
 WinMM (`winmm.dll`) is used. Short messages (≤ 3 bytes) are sent via `midiOutShortMsg`; SysEx via `midiOutLongMsg`.
 
+Device `Id`s are the device's PnP interface path plus the port's ordinal on that interface (`\\?\usb#...|0`), not the WinMM index, so an id doesn't shift when other devices are plugged or unplugged and two identical devices get different ids. Drivers that don't report an interface path (e.g. the Microsoft GS Wavetable Synth) fall back to the WinMM index.
+
 ### macOS
 CoreMIDI (`CoreMIDI.framework`) is used. Both sources (input) and destinations (output) are enumerated.
 
