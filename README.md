@@ -74,6 +74,22 @@ device.Send(new NoteOnMessage(Channel: 0, NoteNumber: 36, Velocity: 127));
 device.SendRaw([0xF0, 0x47, 0x7F, 0x30, 0x2C, 0x01, 0x00, 0xF7]);
 ```
 
+### Unplug and replug
+
+An open device doesn't recover once it's unplugged, even if the same device is plugged back in: the old handle stays dead. `Disconnected` emits once when the OS reports the device gone, so you can dispose it and open the device again once it's enumerated:
+
+```csharp
+device.Disconnected.Subscribe(_ => Console.WriteLine($"{device.Name} was unplugged"));
+
+if (device.IsDisconnected)
+{
+    device.Dispose();
+    // ... re-enumerate and Open() again
+}
+```
+
+This catches a replug too fast for device-list polling to notice. It comes from PnP device-interface notifications on Windows (plus a failed send), a failed read or write on Linux, and a CoreMIDI notification on macOS. Disposing a device completes `Disconnected` without emitting.
+
 ---
 
 ## Message Types
